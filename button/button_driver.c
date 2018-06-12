@@ -11,8 +11,9 @@
 
 #define DEV_NAME "button_driver"
 
-#define LED 21
-#define BUTTON 26
+#define LED 23
+#define BUTTON 18
+
 
 MODULE_LICENSE("GPL");
 
@@ -62,6 +63,10 @@ static int __init button_driver_init(void)
 
     gpio_request_one(LED, GPIOF_OUT_INIT_LOW, "led");
     gpio_request_one(BUTTON, GPIOF_IN, "button");
+
+    //gpio btn export, and do not allow change gpio_btn value in user space.
+    gpio_export(BUTTON,false);
+
     irq_num = gpio_to_irq(BUTTON);
     ret = request_irq(irq_num, button_driver_isr, IRQF_TRIGGER_RISING, "button_irq", NULL);
     if(ret)
