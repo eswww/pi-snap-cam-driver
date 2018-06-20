@@ -7,18 +7,23 @@
 #include <linux/fs.h>
 #include <linux/kernel.h>
 #include <linux/gpio.h>
+#include <linux/wait.h>
+#include <linux/sched.h>
 #include <linux/delay.h>
 
 #define DEV_NAME "button_driver"
 
-#define LED 21
 #define BUTTON 26
 
 MODULE_LICENSE("GPL");
 
 dev_t dev_num;
 static int irq_num;
+static int button_status;
 static struct cdev *cd_cdev;
+
+wait_queue_head_t wq;
+spinlock_t button_lock;
 
 static int button_driver_open(struct inode *inode, struct file *file)
 {
@@ -34,11 +39,28 @@ static int button_driver_release(struct inode *inode, struct file *file)
     return 0;
 }
 
+static int button_driver_read(struct file *file, char *buf, size_t len, loff_t *lof)
+{
+    wait_event_interruptible(wq, button_status != 0);
+
+    spin_lock(&button_lock);
+    button_status = 0;
+    spin_unlock(&button_lock);
+
+    printk("hello!\n");
+
+    return 0;
+}
+
 static irqreturn_t button_driver_isr(int irq, void *dev)
 {
-    int led = !gpio_get_value(LED);
-    gpio_set_value(LED, led);
     printk("[BUTTON_DRIVER] Push\n");
+
+    spin_lock(&button_lock);
+    button_status = 1;
+    spin_unlock(&button_lock);
+
+    wake_up_interruptible(&wq);
 
     return IRQ_HANDLED;
 }
@@ -46,7 +68,8 @@ static irqreturn_t button_driver_isr(int irq, void *dev)
 struct file_operations button_driver_fops =
 {
     .open = button_driver_open,
-    .release = button_driver_release
+    .release = button_driver_release,
+    .read = button_driver_read
 };
 
 static int __init button_driver_init(void)
@@ -55,12 +78,16 @@ static int __init button_driver_init(void)
 
     printk("[BUTTON_DRIVER] Init\n");
 
+    button_status = 0;
+
+    init_waitqueue_head(&wq);
+    spin_lock_init(&button_lock);
+
     alloc_chrdev_region(&dev_num, 0, 1, DEV_NAME);
     cd_cdev = cdev_alloc();
     cdev_init(cd_cdev, &button_driver_fops);
     cdev_add(cd_cdev, dev_num, 1);
 
-    gpio_request_one(LED, GPIOF_OUT_INIT_LOW, "led");
     gpio_request_one(BUTTON, GPIOF_IN, "button");
     irq_num = gpio_to_irq(BUTTON);
     ret = request_irq(irq_num, button_driver_isr, IRQF_TRIGGER_RISING, "button_irq", NULL);
@@ -82,8 +109,6 @@ static void __exit button_driver_exit(void)
     cdev_del(cd_cdev);
     unregister_chrdev_region(dev_num, 1);
     free_irq(irq_num, NULL);
-    gpio_set_value(LED, 0);
-    gpio_free(LED);
     gpio_free(BUTTON);
 }
 
