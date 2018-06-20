@@ -41,13 +41,12 @@ static int button_driver_release(struct inode *inode, struct file *file)
 
 static int button_driver_read(struct file *file, char *buf, size_t len, loff_t *lof)
 {
+    // Blockin I/O
     wait_event_interruptible(wq, button_status != 0);
 
     spin_lock(&button_lock);
     button_status = 0;
     spin_unlock(&button_lock);
-
-    printk("hello!\n");
 
     return 0;
 }
@@ -83,13 +82,17 @@ static int __init button_driver_init(void)
     init_waitqueue_head(&wq);
     spin_lock_init(&button_lock);
 
+    // Init dev
     alloc_chrdev_region(&dev_num, 0, 1, DEV_NAME);
     cd_cdev = cdev_alloc();
     cdev_init(cd_cdev, &button_driver_fops);
     cdev_add(cd_cdev, dev_num, 1);
 
+    // Init GPIO
     gpio_request_one(BUTTON, GPIOF_IN, "button");
     irq_num = gpio_to_irq(BUTTON);
+
+    // Init irq
     ret = request_irq(irq_num, button_driver_isr, IRQF_TRIGGER_RISING, "button_irq", NULL);
     if(ret)
     {
@@ -106,10 +109,15 @@ static void __exit button_driver_exit(void)
 {
     printk("[BUTTON_DRIVER] Exit\n");
 
+    // Free GPIO
+    gpio_free(BUTTON);
+
+    // Free irq
+    free_irq(irq_num, NULL);
+
+    // Free dev
     cdev_del(cd_cdev);
     unregister_chrdev_region(dev_num, 1);
-    free_irq(irq_num, NULL);
-    gpio_free(BUTTON);
 }
 
 module_init(button_driver_init);
